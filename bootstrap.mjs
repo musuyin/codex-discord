@@ -1,28 +1,39 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import net from 'node:net';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 import { bootstrap } from 'global-agent';
-const runtimePath=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'.local');
-fs.mkdirSync(runtimePath,{recursive:true});
-const lockPath=path.join(runtimePath,'bridge.lock');
-let lock;
-try { lock=fs.openSync(lockPath,'wx'); }
-catch(error) {
-  if(error.code!=='EEXIST')throw error;
-  const owner=Number(fs.readFileSync(lockPath,'utf8').trim());
-  if(!Number.isSafeInteger(owner)||owner<=0)throw new Error('Bridge lock is invalid; inspect it locally before starting.');
-  let running=true;
-  try { process.kill(owner,0); } catch(probe) { if(probe.code==='ESRCH')running=false; else throw probe; }
-  if(running)throw new Error('Another bridge instance is already running.');
-  fs.unlinkSync(lockPath);
-  lock=fs.openSync(lockPath,'wx');
+const runtimePath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.local');
+fs.mkdirSync(runtimePath, { recursive: true });
+const identity = createHash('sha256').update(process.platform === 'win32' ? runtimePath.toLowerCase() : runtimePath).digest('hex').slice(0, 20);
+const endpoint = process.platform === 'win32' ? '\\\\.\\pipe\\codex-discord-' + identity : path.join(runtimePath, 'bridge.sock');
+// OS-owned IPC handles prevent PID-reuse false positives and are released on process exit.
+const guard = net.createServer(socket => socket.end());
+async function listen() {
+  await new Promise((resolve, reject) => {
+    const fail = error => { guard.off('listening', ready); reject(error); };
+    const ready = () => { guard.off('error', fail); resolve(); };
+    guard.once('error', fail); guard.once('listening', ready); guard.listen(endpoint);
+  });
 }
-fs.writeFileSync(lock,String(process.pid));
-fs.closeSync(lock);
-process.once('exit',()=>{
-  try { if(fs.readFileSync(lockPath,'utf8').trim()===String(process.pid))fs.unlinkSync(lockPath); } catch {}
-});
+try { await listen(); }
+catch (error) {
+  if (error.code !== 'EADDRINUSE') throw error;
+  if (process.platform === 'win32') throw new Error('Another codex-discord instance is already running.');
+  const alive = await new Promise((resolve, reject) => {
+    const probe = net.connect(endpoint);
+    probe.once('connect', () => { probe.end(); resolve(true); });
+    probe.once('error', cause => { if (['ECONNREFUSED', 'ENOENT'].includes(cause.code)) resolve(false); else reject(cause); });
+  });
+  if (alive) throw new Error('Another codex-discord instance is already running.');
+  const relative = path.relative(runtimePath, endpoint);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Invalid IPC endpoint');
+  try { fs.unlinkSync(endpoint); } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+  await listen();
+}
+guard.on('error', error => { console.error('Local instance guard failed:', error.message); process.exit(1); });
 if (process.env.DISCORD_PROXY_URL) {
   process.env.GLOBAL_AGENT_HTTP_PROXY = process.env.DISCORD_PROXY_URL;
   process.env.GLOBAL_AGENT_HTTPS_PROXY = process.env.DISCORD_PROXY_URL;
