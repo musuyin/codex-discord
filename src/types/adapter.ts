@@ -1,0 +1,27 @@
+import type { CodexSandboxMode } from "./config.js";
+import type { ChannelSession } from "./domain.js";
+
+export interface CodexExecuteInput {
+  taskId: string;
+  projectPath: string;
+  prompt: string;
+  imagePaths?: string[];
+  sandboxMode: CodexSandboxMode;
+  session?: ChannelSession | null;
+  abortSignal?: AbortSignal;
+}
+
+export interface CodexExecuteResult {
+  ok: boolean;
+  content: string;
+  stderr: string;
+  exitCode: number | null;
+  durationMs: number;
+  sessionId?: string | null;
+  errorMessage?: string;
+  cancelled?: boolean;
+}
+
+export interface CodexAdapter {
+  execute(input: CodexExecuteInput): Promise<CodexExecuteResult>;
+}
