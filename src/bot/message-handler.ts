@@ -9,6 +9,7 @@ import {
   formatFailedMessages,
   formatHelpMessage
 } from "../core/message-formatter.js";
+import { DiscordImageDownloader, ImageInputError, type ImageDownloader } from "./image-attachments.js";
 import { TaskOrchestrator } from "../core/task-orchestrator.js";
 import type { BindingStore } from "../store/binding-store.js";
 
@@ -24,10 +25,14 @@ export interface DiscordMessageHandlerDeps {
   orchestrator: TaskOrchestrator;
   commands: MessageHandlerCommands;
   logger: Logger;
+  imageDownloader?: ImageDownloader;
 }
 
 export class DiscordMessageHandler {
-  public constructor(private readonly deps: DiscordMessageHandlerDeps) {}
+  private readonly imageDownloader: ImageDownloader;
+  public constructor(private readonly deps: DiscordMessageHandlerDeps) {
+    this.imageDownloader = deps.imageDownloader ?? new DiscordImageDownloader();
+  }
 
   public async handle(message: Message<boolean>): Promise<void> {
     if (message.author.bot || !message.inGuild()) {
@@ -35,11 +40,10 @@ export class DiscordMessageHandler {
     }
 
     const content = message.content.trim();
-    if (!content) {
-      return;
-    }
+    const attachments = [...(message.attachments?.values() ?? [])];
+    if (!content && !attachments.length) return;
 
-    if (await this.handleCommand(message, content)) {
+    if (!attachments.length && await this.handleCommand(message, content)) {
       return;
     }
 
@@ -51,11 +55,20 @@ export class DiscordMessageHandler {
       return;
     }
 
+    let imagePaths: string[];
+    try {
+      imagePaths = await this.imageDownloader.download(message.channelId, message.id, attachments);
+    } catch (error) {
+      this.deps.logger.warn({ channelId: message.channelId, messageId: message.id }, 'Image input preparation failed');
+      await message.reply(error instanceof ImageInputError ? error.message : '图片读取准备失败，请重新上传。');
+      return;
+    }
     const submission = this.deps.orchestrator.submit({
       guildId: message.guildId ?? "unknown",
       channelId: message.channelId,
       userId: message.author.id,
-      prompt: content,
+      prompt: content || "请结合我发送的图片和当前对话上下文回答。",
+      ...(imagePaths.length ? { imagePaths } : {}),
       binding
     });
 
