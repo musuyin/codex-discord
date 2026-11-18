@@ -396,11 +396,14 @@ export function buildCodexResumeArgs(
 export interface ParsedCodexJsonStream {
   lastAssistantMessage: string;
   threadId: string | null;
+  errorMessage: string;
 }
 
 export function parseCodexJsonStream(stdout: string): ParsedCodexJsonStream {
   let threadId: string | null = null;
   let lastAssistantMessage = "";
+  let lastError = "";
+  let turnFailure = "";
 
   for (const line of stdout.split("\n")) {
     const trimmed = line.trim();
@@ -410,13 +413,21 @@ export function parseCodexJsonStream(stdout: string): ParsedCodexJsonStream {
 
     try {
       const event = JSON.parse(trimmed) as {
+        error?: { message?: string };
         item?: { text?: string; type?: string };
+        message?: string;
         thread_id?: string;
         type?: string;
       };
 
       if (event.type === "thread.started" && typeof event.thread_id === "string") {
         threadId = event.thread_id;
+      }
+      if (event.type === "error" && typeof event.message === "string") {
+        lastError = event.message.trim() || lastError;
+      }
+      if (event.type === "turn.failed" && typeof event.error?.message === "string") {
+        turnFailure = event.error.message.trim() || turnFailure;
       }
 
       if (
@@ -433,7 +444,8 @@ export function parseCodexJsonStream(stdout: string): ParsedCodexJsonStream {
 
   return {
     lastAssistantMessage,
-    threadId
+    threadId,
+    errorMessage: turnFailure || lastError
   };
 }
 
@@ -492,6 +504,7 @@ function normalizeCommandResult(
     durationMs: commandResult.durationMs,
     ...(sessionId ? { sessionId } : {}),
     errorMessage:
+      parsedStream.errorMessage ||
       content ||
       commandResult.stderr ||
       `Codex exited with code ${commandResult.exitCode ?? "unknown"}.`

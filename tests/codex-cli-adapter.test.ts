@@ -136,7 +136,10 @@ describe("CodexCliAdapter", () => {
         exitCode: 1,
         outputLastMessage: "",
         stderr: "resume failed",
-        stdout: "",
+        stdout: [
+          '{"type":"error","message":"Reconnecting... 5/5"}',
+          '{"type":"turn.failed","error":{"message":"workspace routing discovery timed out"}}'
+        ].join("\n"),
         timedOut: false,
         cancelled: false
       })
@@ -176,7 +179,8 @@ describe("CodexCliAdapter", () => {
 
     expect(result.ok).toBe(false);
     expect(result.sessionId).toBe("session-old");
-    expect(result.errorMessage).toBe("resume failed");
+    expect(result.errorMessage).toBe("workspace routing discovery timed out");
+    expect(result.stderr).toBe("resume failed");
     expect(runner).toHaveBeenCalledTimes(1);
     expect(runner.mock.calls[0]?.[0].args).toEqual([
       "exec",

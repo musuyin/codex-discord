@@ -20,10 +20,11 @@ export function formatCompletedMessages(
 }
 
 export function formatFailedMessages(result: TaskExecutionResult): string[] {
-  const stderrBlock = result.stderr
-    ? `\n\nstderr:\n${truncateText(result.stderr, 800)}`
+  const stderr = result.stderr?.trim();
+  const body = result.error?.trim() || stderr || "Codex 执行失败。";
+  const stderrBlock = stderr && stderr !== body
+    ? `\n\nstderr:\n${truncateText(stderr, 800)}`
     : "";
-  const body = result.error?.trim() || "Codex 执行失败。";
 
   return chunkDiscordMessage(
     `任务 \`${result.task.taskId}\` 执行失败 (${formatDuration(result.durationMs)})\n项目: \`${result.task.projectPath}\`\n\n${body}${stderrBlock}`
